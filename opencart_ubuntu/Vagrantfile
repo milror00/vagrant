@@ -1,0 +1,103 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure(2) do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://atlas.hashicorp.com/search.
+  config.vm.box = "ubuntu/trusty32"
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine. In the example below,
+  # accessing "localhost:8080" will access port 80 on the guest machine.
+    config.vm.network "forwarded_port", guest: 80, host: 8080
+
+  # Create a private network, which allows host-only access to the machine
+  # using a specific IP.
+    config.vm.network "private_network", ip: "192.168.33.15"
+
+
+    config.vm.provision "shell", inline: <<-SHELL
+      # Variables
+      APPENV=local
+      DBHOST=localhost
+      DBNAME=opencart
+      DBUSER=opencartuser
+      DBPASSWD=password
+	  DOMAIN=www.opencartdev.co
+
+      echo -e "\n--- Opencart provisioned box, installing now... ---\n"
+
+      echo -e "\n--- Updating packages list ---\n"
+      apt-get -qq update
+
+      echo -e "\n--- Install base packages ---\n"
+      apt-get -y install vim curl build-essential software-properties-common python-software-properties > /dev/null 2>&1
+	  
+	  echo -e "\n--- Install git ---\n"
+	  apt-get install -y git git-core git-doc > /dev/null 2>&1
+
+      echo -e "\n--- Add some repos to update our distribution ---\n"
+      add-apt-repository ppa:ondrej/php5 > /dev/null 2>&1
+
+      echo -e "\n--- Updating packages list ---\n"
+      apt-get -qq update
+
+      echo -e "\n--- Install MySQL specific packages and settings ---\n"
+      echo "mysql-server mysql-server/root_password password $DBPASSWD" | debconf-set-selections
+      echo "mysql-server mysql-server/root_password_again password $DBPASSWD" | debconf-set-selections
+      echo "phpmyadmin phpmyadmin/dbconfig-install boolean true" | debconf-set-selections
+      echo "phpmyadmin phpmyadmin/app-password-confirm password $DBPASSWD" | debconf-set-selections
+      echo "phpmyadmin phpmyadmin/mysql/admin-pass password $DBPASSWD" | debconf-set-selections
+      echo "phpmyadmin phpmyadmin/mysql/app-pass password $DBPASSWD" | debconf-set-selections
+      echo "phpmyadmin phpmyadmin/reconfigure-webserver multiselect none" | debconf-set-selections
+      apt-get -y install mysql-server-5.5 phpmyadmin > /dev/null 2>&1
+
+      echo -e "\n--- Setting up our MySQL user and db ---\n"
+      mysql -uroot -p$DBPASSWD -e "CREATE DATABASE $DBNAME"
+      mysql -uroot -p$DBPASSWD -e "grant all privileges on $DBNAME.* to '$DBUSER'@'localhost' identified by '$DBPASSWD'"
+	  
+	  echo -e "\n--- Installing Ngnix packages ---\n"
+	  apt-get -y install nginx  > /dev/null 2>&1
+
+      echo -e "\n--- Installing PHP-specific packages ---\n"
+      apt-get -y install php5 php5-fpm php5-mysql php5-curl php5-gd php5-mcrypt > /dev/null 2>&1
+	  cd /etc/php5/fpm
+	  replace ";cgi.fix_pathinfo=1" "cgi.fix_pathinfo=0" -- php.ini 
+	  cd /etc/php5/fpm/conf.d/
+	  ln -s ../../mods-available/mcrypt.ini mcrypt.ini
+	  
+	  echo -e "\n--- configure virtual host for opencart ---\n"
+	  cp /vagrant/opencart /etc/nginx/sites-available/
+      cd /etc/nginx/sites-available/
+      replace "www.myopencart.co" "$DOMAIN" -- opencart	
+      ln -s /etc/nginx/sites-available/opencart /etc/nginx/sites-enabled/	  
+
+	  echo -e "\n--- setup opencart ---\n"
+      cp /vagrant/2.2.0.0-compiled.zip /var/www/
+      cd /opt
+	  apt-get install unzip
+	  cd /var/www/
+	  unzip 2.2.0.0-compiled.zip
+	  mv 2.2.0.0-compiled/ opencart/
+	  cd opencart/upload/
+	  cp config-dist.php config.php
+      cp admin/config-dist.php admin/config.php
+	  cd /var/www/
+      chown -R www-data:www-data opencart/
+
+	  echo -e "\n--- restart nginx ---\n"
+	  sudo service nginx restart > /dev/null 2>&1	
+	  
+	  echo -e "\n--- restart php5-fpm ---\n"
+	  sudo service php5-fpm restart > /dev/null 2>&1	  
+
+    SHELL
+end
